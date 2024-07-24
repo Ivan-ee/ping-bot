@@ -2,37 +2,57 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"ping-bot/workerpool"
 )
 
-func worker(id int, jobs <-chan int, results chan<- int) {
-	for j := range jobs {
-		fmt.Println("worker", id, "started  job", j)
-		time.Sleep(time.Second)
-		fmt.Println("worker", id, "finished job", j)
-		results <- j * j
-	}
+const (
+	INTERVAL        = time.Second * 10
+	REQUEST_TIMEOUT = time.Second * 2
+	WORKERS_COUNT   = 3
+)
+
+var urls = []string{
+	"https://golang-ninja.com/",
+	"https://google.com/",
+	"https://golang.org/",
 }
 
 func main() {
+	results := make(chan workerpool.Result)
+	workerPool := workerpool.New(WORKERS_COUNT, REQUEST_TIMEOUT, results)
 
-	const numJobs = 15
-	const workersCount = 3
+	workerPool.Init()
 
-	jobs := make(chan int, numJobs)
-	results := make(chan int, numJobs)
+	go generateJobs(workerPool)
+	go processResults(results)
 
-	for w := 1; w <= workersCount; w++ {
-		go worker(w, jobs, results)
-	}
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
 
-	for j := 1; j <= numJobs; j++ {
-		jobs <- j
-	}
+	<-quit
 
-	close(jobs)
+	workerPool.Stop()
+}
 
-	for a := 1; a <= numJobs; a++ {
-		fmt.Printf("result: #%d - %d\n", a, <-results)
+func processResults(results chan workerpool.Result) {
+	go func() {
+		for result := range results {
+			fmt.Println(result.Info())
+		}
+	}()
+}
+
+func generateJobs(wp *workerpool.Pool) {
+	for {
+		for _, url := range urls {
+			wp.Push(workerpool.Job{URL: url})
+		}
+
+		time.Sleep(INTERVAL)
 	}
 }
